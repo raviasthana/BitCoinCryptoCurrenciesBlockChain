@@ -2,306 +2,328 @@ package scroogecoin;
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.PriorityQueue;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
 
 public class TxHandler {
+	public UTXOPool pool;
 
-	public static final int VALID = 1;
-	public static final int INVALID = -1;
-	public static final int POSSIBLY_VALID = 0;
-
-	private UTXOPool up;
-
-	/**
+	/*
 	 * Creates a public ledger whose current UTXOPool (collection of unspent
 	 * transaction outputs) is utxoPool. This should make a defensive copy of
 	 * utxoPool by using the UTXOPool(UTXOPool uPool) constructor.
 	 */
 	public TxHandler(UTXOPool utxoPool) {
-		up = new UTXOPool(utxoPool);
+		pool = new UTXOPool(utxoPool);
 	}
 
-	/** Returns true if
-	   * (1) all outputs claimed by tx are in the current UTXO pool
-	   * (2) the signatures on each input of tx are valid
-	   * (3) no UTXO is claimed multiple times by tx
-	   * (4) all of tx’s output values are non-negative
-	   * (5) the sum of tx’s input values is greater than or equal 
-	   * to the sum of its output values; and false otherwise.
-	   */
+	/*
+	 * Returns true if (1) all outputs claimed by tx are in the current UTXO
+	 * pool, (2) the signatures on each input of tx are valid, (3) no UTXO is
+	 * claimed multiple times by tx, (4) all of tx’s output values are
+	 * non-negative, and (5) the sum of tx’s input values is greater than or
+	 * equal to the sum of its output values; and false otherwise.
+	 */
+
 	public boolean isValidTx(Transaction tx) {
+		boolean hasValidInputs = hasValidInputs(tx);
+		boolean hasValidOutputs = hasValidOutputs(tx);
 
-		ArrayList<UTXO> txUTXOList = new ArrayList<UTXO>();
+		double fee = calculateFee(tx);
+		boolean hasValidFee = fee >= 0;
 
-		double inputSum = 0;
-		double outputSum = 0;
+		return hasValidInputs && hasValidOutputs && hasValidFee;
+	}
 
-		int index = 0;
+	/*
+	 * returns true iff (1) claimed outputs are in UTXO pool (2) signatures on
+	 * each input is valid (3) claimed outputs are unique
+	 */
+	private boolean hasValidInputs(Transaction tx) {
+		UTXOPool consumed = new UTXOPool();
 
-		for (Transaction.Input in : tx.getInputs()) {
+		for (int i = 0; i < tx.numInputs(); i++) {
+			Transaction.Input input = tx.getInput(i);
 
-			UTXO inUTXO = new UTXO(in.prevTxHash, in.outputIndex);
+			// test claimed outputs exist and are unique
+			UTXO utxo = new UTXO(input.prevTxHash, input.outputIndex);
+			if (!pool.contains(utxo) || consumed.contains(utxo)) {
+				return false;
+			}
+			consumed.addUTXO(utxo, null);
 
-			// if the transaction pool doesn't contain it already
-			if (!up.contains(inUTXO))
-				return false; // 1
-
-			inputSum += up.getTxOutput(inUTXO).value;
-
-			// Check Signature
-			if(!Crypto.verifySignature(up.getTxOutput(inUTXO).address, 
-					tx.getRawDataToSign(index), 
-					in.signature))
-				return false; // 2
-
-			// no UTXO is claimed multiple times by tx
-			if (txUTXOList.contains(inUTXO))
-				return false; // 3
-
-			txUTXOList.add(inUTXO);
-
-			index++;
+			// test signature validity on this input
+			byte[] msg = tx.getRawDataToSign(i);
+			byte[] sig = input.signature;
+			if (!Crypto.verifySignature(pool.getTxOutput(utxo).address, msg,
+					sig)) {
+				return false;
+			}
 		}
-
-		for (Transaction.Output out : tx.getOutputs()) {
-			if (out.value < 0)
-				return false; // 4
-			outputSum += out.value;
-		}
-
-		if (outputSum > inputSum)
-			return false; // 5
 
 		return true;
 	}
 
 	/*
-	 * classifies transaction AND creates a wrapper.
+	 * returns true iff (4) all output values are non-negative
 	 */
-	public TxWrapper wrapTx(Transaction tx) {
-		
-		int result = VALID;
-		ArrayList<UTXO> seenUTXO = new ArrayList<UTXO>();
-
-		double inputSum = 0;
-		double outputSum = 0;
-
-		int index = 0;
-
-		for (Transaction.Input in : tx.getInputs()) {
-
-			UTXO checkUTXO = new UTXO(in.prevTxHash, in.outputIndex);
-
-			// if the transaction pool doesn't contain it already
-			if (!up.contains(checkUTXO)) {
-				result = POSSIBLY_VALID;
-				inputSum = -1;
-			} else {
-				inputSum += up.getTxOutput(checkUTXO).value;
-				// Check Signature
-				if(!Crypto.verifySignature(up.getTxOutput(checkUTXO).address, 
-						tx.getRawDataToSign(index), 
-						in.signature))
-					return null; // 2
-			}
-
-			if (seenUTXO.contains(checkUTXO))
-				return null; // 3
-			// no UTXO is claimed multiple times by tx
-
-			seenUTXO.add(checkUTXO);
-			
-			index++;
+	private boolean hasValidOutputs(Transaction tx) {
+		for (Transaction.Output output : tx.getOutputs()) {
+			if (output.value < 0)
+				return false;
 		}
-
-		for (Transaction.Output out : tx.getOutputs()) {
-			if (out.value < 0)
-				return null; // 4
-			outputSum += out.value;
-		}
-
-		if (inputSum != -1 && outputSum > inputSum)
-			return null; // 5
-
-		return new TxWrapper(new Transaction(tx), inputSum - outputSum, result);
+		return true;
 	}
 
-	// this only checks if all the inputs are in the UTXO pool
-	public int quickCheck(TxWrapper wrapped) {
-		Transaction tx = wrapped.getTx();
-		double inSum = 0;
-		int index = 0;
-		for (Transaction.Input in : tx.getInputs()) {
-
-			UTXO checkUTXO = new UTXO(in.prevTxHash, in.outputIndex);
-
-			// if the transaction pool doesn't contain it already
-			if (!up.contains(checkUTXO)) {
-				return POSSIBLY_VALID;
-			}
-
-			if(!Crypto.verifySignature(up.getTxOutput(checkUTXO).address, 
-					tx.getRawDataToSign(index), 
-					in.signature))
-				return INVALID; // 2
-			inSum += up.getTxOutput(checkUTXO).value;
-			index++;
+	private double calculateFee(Transaction tx) {
+		double in = 0;
+		for (Transaction.Input input : tx.getInputs()) {
+			UTXO utxo = new UTXO(input.prevTxHash, input.outputIndex);
+			in = in + pool.getTxOutput(utxo).value;
 		}
-		wrapped.setFee(wrapped.getFee() - inSum);
-		return VALID;
+
+		double out = 0;
+		for (Transaction.Output output : tx.getOutputs()) {
+			out = out + output.value;
+		}
+
+		return out - in;
 	}
 
-	/**
+	private void updateUTXO(Transaction tx) {
+		byte[] hash = tx.getHash();
+
+		// remove all inputs
+		ArrayList<Transaction.Input> inputArray = tx.getInputs();
+		for (Transaction.Input in : inputArray) {
+			UTXO toRemove = new UTXO(in.prevTxHash, in.outputIndex);
+			pool.removeUTXO(toRemove);
+		}
+
+		// add all outputs
+		ArrayList<Transaction.Output> outputArray = tx.getOutputs();
+		int i = 0;
+		for (Transaction.Output out : outputArray) {
+			UTXO toAdd = new UTXO(hash, i);
+			pool.addUTXO(toAdd, out);
+			i++;
+		}
+	}
+
+	/*
 	 * Handles each epoch by receiving an unordered array of proposed
 	 * transactions, checking each transaction for correctness, returning a
 	 * mutually valid array of accepted transactions, and updating the current
 	 * UTXO pool as appropriate.
 	 */
 	public Transaction[] handleTxs(Transaction[] possibleTxs) {
-		 
-		/*
-		 * (1) first create a hash to transaction table for possibleTxs
-		 * 
-		 * (2) remove/ignore the invalid transaction, if any. 
-		 * If all inputs are in UTXOPool, add it to nbrsOfGood. 
-		 * For each input, add that transaction to the "refs" list of the 
-		 * referenced address.
-		 *  
-		 * (3) order possiblyGoodTxs by transaction fee (make txFee a method). 
-		 * Repeat until potGoodTxs is empty: take the transaction tx with 
-		 * maximum fee in nbrsOfGood and if it's valid, then put it in UTXOPool. 
-		 * Take any transactions that attempt to double-spend the addresses 
-		 * just spent and delete them from potGoodTxs (optional). 
-		 * Check neighbours of tx; if they are valid put them into nbrsOfGood.
-		 */
-		HashMap<byte[], TxWrapper> hashToTx = new HashMap<byte[], TxWrapper>();
-		PriorityQueue<TxWrapper> nbrsOfGood = new PriorityQueue<TxWrapper>();
-		ArrayList<TxWrapper> possiblyGoodTxs = new ArrayList<TxWrapper>();
-		ArrayList<Transaction> goodTxs = new ArrayList<Transaction>();
-
+		TxHandler handle = new TxHandler(pool);
+		ArrayList<Transaction> acceptedTx = new ArrayList<Transaction>();
+		ArrayList<Transaction> toCheckAgain = new ArrayList<Transaction>();
+		int count = 1;
 		for (Transaction tx : possibleTxs) {
-			
-			TxWrapper wrappedTx = wrapTx(tx);
-			
-			if (wrappedTx != null){
-				
-				hashToTx.put(tx.getHash(), wrappedTx);
 
-				switch (wrappedTx.getValidity()) {
-				
-					case VALID:
-						nbrsOfGood.add(wrappedTx);
-						break;
-						
-					case POSSIBLY_VALID:
-						possiblyGoodTxs.add(wrappedTx);
-						break;
-					// case INVALID:
-						// do nothing
-				}				
-			}
-		}
-
-		for (TxWrapper wrappedTx : possiblyGoodTxs) {
-			for (Transaction.Input in : wrappedTx.getTx().getInputs()) {
-				byte[] hash = in.prevTxHash;
-				TxWrapper origin = hashToTx.get(hash);
-				UTXO checkUTXO = new UTXO(in.prevTxHash, in.outputIndex);
-
-				if (origin == null && (!up.contains(checkUTXO))) {
-					break;
-					// can do another check to see if we can actually remove
-					// this but it's not a big deal.
-				}
-				origin.addRef(wrappedTx);
-			}
-		}
-
-		while (!nbrsOfGood.isEmpty()) {
-			
-			TxWrapper top = nbrsOfGood.poll();
-
-			if (quickCheck(top) != VALID)
+			// check is transaction is valid
+			if (!handle.isValidTx(tx)) {
+				toCheckAgain.add(tx);
 				continue;
-
-			goodTxs.add(top.getTx());
-			// Remove old UTXOs from Pool
-			for (Transaction.Input in : top.getTx().getInputs()) {
-				UTXO delUTXO = new UTXO(in.prevTxHash, in.outputIndex);
-				up.removeUTXO(delUTXO);
-			}
-			// reuse code
-			for (int j = 0; j < top.getTx().getOutputs().size(); j++) {
-				UTXO newUTXO = new UTXO(top.getTx().getHash(), j);
-				up.addUTXO(newUTXO, top.getTx().getOutputs().get(j));
 			}
 
-			// destroy all things that were invalidated.
+			updateUTXO(tx);
+			acceptedTx.add(tx);
+		}
 
-			for (TxWrapper nbr : top.getRefs()) {
-				if (quickCheck(nbr) == VALID) {
-					nbrsOfGood.add(nbr);
+		// while one thing has been added to acceptedTx in last round
+		while (count >= 0) {
+			count = 0;
+			for (Transaction tx : toCheckAgain) {
+				if (!handle.isValidTx(tx)) {
+					continue;
 				}
-				// if nbr is valid
-				// then add it to nbrsOfGood
+				count++;
+				updateUTXO(tx);
+				acceptedTx.add(tx);
+				toCheckAgain.remove(tx);
 			}
 		}
 
-		Transaction[] tArr = new Transaction[goodTxs.size()];
-		tArr = goodTxs.toArray(tArr);
-		return tArr;
+		// change to array
+		Transaction[] acceptedArr = new Transaction[acceptedTx.size()];
+		acceptedArr = acceptedTx.toArray(acceptedArr);
+
+		return acceptedArr;
 	}
 
-	// Transaction wrapper class
-	public class TxWrapper implements Comparable<TxWrapper> {
-		
-		private Transaction tx;
-		private ArrayList<TxWrapper> refs;
-		private double fee;
-		private int validity;
+	public static class TxHandlerUtil {
+		public static HashMap<UTXO, Transaction> constructUTXOMapping(
+				Transaction[] txs, UTXOPool pool) {
+			HashMap<UTXO, Transaction> map = new HashMap<UTXO, Transaction>();
 
-		public TxWrapper(Transaction tx, double fee, int validity) {
-			this.setTx(tx);
-			this.setFee(fee);
-			this.setValidity(validity);
-			this.refs = new ArrayList<TxWrapper>();
+			for (UTXO utxo : pool.getAllUTXO()) {
+				map.put(utxo, null);
+			}
+
+			for (Transaction tx : txs) {
+				for (int i = 0; i < tx.getOutputs().size(); i++) {
+					UTXO utxo = new UTXO(tx.getHash(), i);
+					map.put(utxo, tx);
+				}
+			}
+
+			return map;
 		}
 
-		public Transaction getTx() {
-			return tx;
+		public static HashMap<Transaction, HashSet<Transaction>> constructTxDependencies(
+				Transaction[] txs, UTXOPool pool) {
+			HashMap<UTXO, Transaction> txForUtxo = constructUTXOMapping(txs,
+					pool);
+			HashMap<Transaction, HashSet<Transaction>> dep = new HashMap<Transaction, HashSet<Transaction>>();
+
+			for (Transaction tx : txs) {
+				if (!dep.containsKey(tx)) {
+					dep.put(tx, new HashSet<Transaction>());
+				}
+
+				for (Transaction.Input input : tx.getInputs()) {
+					UTXO utxo = new UTXO(input.prevTxHash, input.outputIndex);
+					// this is an invalid tx because it consumes a utxo that
+					// doesn't exist
+					if (!txForUtxo.containsKey(utxo)) {
+						dep.remove(tx);
+						break;
+					}
+
+					dep.get(tx).add(txForUtxo.get(utxo));
+				}
+			}
+
+			return dep;
 		}
 
-		public void setTx(Transaction tx) {
-			this.tx = tx;
+		public static HashSet<HashSet<Transaction>> calculateMaximalSets(
+				Transaction[] txs) {
+			HashMap<Transaction, HashSet<Transaction>> conflicts = findConflicts(txs);
+			return getMaximalDisjointSets(conflicts);
 		}
 
-		public ArrayList<TxWrapper> getRefs() {
-			return refs;
+		// use the Bron-Kerbosch algorithm
+		// (http://en.wikipedia.org/wiki/Bron%E2%80%93Kerbosch_algorithm)
+		// to find all the maximal independent sets
+		public static void bronKerbosch(Set<Transaction> taken,
+				Set<Transaction> remaining, Set<Transaction> excluded,
+				Set<HashSet<Transaction>> ret,
+				Map<Transaction, HashSet<Transaction>> neighbors) {
+			if (remaining.isEmpty() && excluded.isEmpty()) {
+				ret.add(new HashSet<Transaction>(taken));
+				return;
+			}
+
+			Set<Transaction> r = new HashSet<Transaction>(taken);
+			Set<Transaction> p = new HashSet<Transaction>(remaining);
+			Set<Transaction> x = new HashSet<Transaction>(excluded);
+
+			for (Transaction v : remaining) {
+				Set<Transaction> n = neighbors.get(v);
+
+				// R union {v}
+				Set<Transaction> rNew = new HashSet<Transaction>(r);
+				rNew.add(v);
+
+				// P intersect neigbors(v)
+				Set<Transaction> pNew = new HashSet<Transaction>(p);
+				p.retainAll(n);
+
+				// X intersect neighbors(v)
+				Set<Transaction> xNew = new HashSet<Transaction>(x);
+				x.retainAll(n);
+
+				bronKerbosch(rNew, pNew, xNew, ret, neighbors);
+
+				p.remove(v);
+				x.remove(v);
+			}
 		}
 
-		public int compareTo(TxWrapper tx2) {
-			return Double.compare(fee, tx2.getFee());
+		// calculate the maximal disjoint sets using the Bron-Kerbosch algorithm
+		public static HashSet<HashSet<Transaction>> getMaximalDisjointSets(
+				HashMap<Transaction, HashSet<Transaction>> conflicts) {
+			Set<Transaction> vertices = conflicts.keySet();
+
+			HashSet<HashSet<Transaction>> ret = new HashSet<HashSet<Transaction>>();
+			bronKerbosch(new HashSet<Transaction>(), vertices,
+					new HashSet<Transaction>(), ret, conflicts);
+
+			return ret;
 		}
 
-		public double getFee() {
-			return fee;
-		}
+		// construct the conflict graph
+		public static HashMap<Transaction, HashSet<Transaction>> findConflicts(
+				Transaction[] txs) {
+			HashMap<Transaction.Input, HashSet<Transaction>> consumes = new HashMap<Transaction.Input, HashSet<Transaction>>();
+			for (Transaction tx : txs) {
+				for (Transaction.Input input : tx.getInputs()) {
+					if (!consumes.containsKey(input))
+						consumes.put(input, new HashSet<Transaction>());
+					consumes.get(input).add(tx);
+				}
+			}
 
-		public void setFee(double fee) {
-			this.fee = fee;
-		}
+			HashMap<Transaction, HashSet<Transaction>> conflicts = new HashMap<Transaction, HashSet<Transaction>>();
+			for (HashSet<Transaction> conflicting : consumes.values()) {
+				if (conflicting.size() > 1) {
+					for (Transaction tx1 : conflicting) {
+						for (Transaction tx2 : conflicting) {
+							if (!tx1.equals(tx2)) {
+								// tx1 conflicts with tx2
+								if (!conflicts.containsKey(tx1))
+									conflicts.put(tx1,
+											new HashSet<Transaction>());
+								conflicts.get(tx1).add(tx2);
+							}
+						}
+					}
+				}
+			}
 
-		public int getValidity() {
-			return validity;
-		}
-
-		public void setValidity(int validity) {
-			this.validity = validity;
-		}
-
-		public void addRef(TxWrapper tx2) {
-			refs.add(tx2);
+			return conflicts;
 		}
 	}
 
+	// find if the txSet is valid
+	public boolean checkIfValid(HashSet<Transaction> txSet) {
+		UTXOPool poolCopy = new UTXOPool(pool);
+		UTXOPool newUTXO = new UTXOPool();
+		for (Transaction tx : txSet) {
+			if (!hasValidOutputs(tx)) {
+				return false;
+			}
+
+			byte[] hash = tx.getHash();
+			ArrayList<Transaction.Output> outputArray = tx.getOutputs();
+			int i = 0;
+			for (Transaction.Output out : outputArray) {
+				UTXO toAdd = new UTXO(hash, i);
+				newUTXO.addUTXO(toAdd, out);
+				i++;
+			}
+		}
+
+		for (Transaction tx : txSet) {
+			for (int i = 0; i < tx.numInputs(); i++) {
+				Transaction.Input input = tx.getInput(i);
+				UTXO utxo = new UTXO(input.prevTxHash, input.outputIndex);
+				boolean pool = poolCopy.contains(utxo);
+				boolean inNew = newUTXO.contains(utxo);
+				if (!pool && !inNew) {
+					return false;
+				} else if (pool) {
+					poolCopy.removeUTXO(utxo);
+				} else {
+					newUTXO.removeUTXO(utxo);
+				}
+			}
+		}
+		return true;
+	}
 }

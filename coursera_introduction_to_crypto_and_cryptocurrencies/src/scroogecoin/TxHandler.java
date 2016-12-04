@@ -32,33 +32,34 @@ public class TxHandler {
 	   */
 	public boolean isValidTx(Transaction tx) {
 
-		ArrayList<UTXO> seenUTXO = new ArrayList<UTXO>();
+		ArrayList<UTXO> txUTXOList = new ArrayList<UTXO>();
 
-		double inSum = 0;
-		double outSum = 0;
+		double inputSum = 0;
+		double outputSum = 0;
 
 		int index = 0;
 
 		for (Transaction.Input in : tx.getInputs()) {
 
-			UTXO checkUTXO = new UTXO(in.prevTxHash, in.outputIndex);
-			if (seenUTXO.contains(checkUTXO))
-				return false; // 3
-			// no UTXO is claimed multiple times by tx
-
-			seenUTXO.add(checkUTXO);
+			UTXO inUTXO = new UTXO(in.prevTxHash, in.outputIndex);
 
 			// if the transaction pool doesn't contain it already
-			if (!up.contains(checkUTXO))
+			if (!up.contains(inUTXO))
 				return false; // 1
 
-			inSum += up.getTxOutput(checkUTXO).value;
+			inputSum += up.getTxOutput(inUTXO).value;
 
 			// Check Signature
-			if(!Crypto.verifySignature(up.getTxOutput(checkUTXO).address, 
+			if(!Crypto.verifySignature(up.getTxOutput(inUTXO).address, 
 					tx.getRawDataToSign(index), 
 					in.signature))
 				return false; // 2
+
+			// no UTXO is claimed multiple times by tx
+			if (txUTXOList.contains(inUTXO))
+				return false; // 3
+
+			txUTXOList.add(inUTXO);
 
 			index++;
 		}
@@ -66,10 +67,10 @@ public class TxHandler {
 		for (Transaction.Output out : tx.getOutputs()) {
 			if (out.value < 0)
 				return false; // 4
-			outSum += out.value;
+			outputSum += out.value;
 		}
 
-		if (outSum > inSum)
+		if (outputSum > inputSum)
 			return false; // 5
 
 		return true;

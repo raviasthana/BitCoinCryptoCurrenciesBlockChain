@@ -218,6 +218,7 @@ public class TxHandler {
 		}
 
 		while (!nbrsOfGood.isEmpty()) {
+			
 			TxWrapper top = nbrsOfGood.poll();
 
 			if (quickCheck(top) != VALID)

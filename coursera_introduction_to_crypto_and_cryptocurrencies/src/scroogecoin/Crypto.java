@@ -1,4 +1,4 @@
-package assignment1;
+package scroogecoin;
 
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;

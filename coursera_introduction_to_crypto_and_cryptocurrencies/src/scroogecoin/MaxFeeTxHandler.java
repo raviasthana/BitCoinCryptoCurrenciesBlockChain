@@ -1,4 +1,4 @@
-package assignment1;
+package scroogecoin;
 
 import java.util.ArrayList;
 import java.util.Arrays;

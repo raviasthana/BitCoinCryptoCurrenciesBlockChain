@@ -1,11 +1,14 @@
 package assignment1;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
 import java.util.PriorityQueue;
 
-public class TxHandler {
+public class MaxFeeTxHandler {
 
 	public static final int VALID = 1;
 	public static final int INVALID = -1;
@@ -13,23 +16,24 @@ public class TxHandler {
 
 	private UTXOPool up;
 
-	/**
+	/*
 	 * Creates a public ledger whose current UTXOPool (collection of unspent
 	 * transaction outputs) is utxoPool. This should make a defensive copy of
 	 * utxoPool by using the UTXOPool(UTXOPool uPool) constructor.
 	 */
-	public TxHandler(UTXOPool utxoPool) {
+	public MaxFeeTxHandler(UTXOPool utxoPool) {
+		// IMPLEMENT THIS
 		up = new UTXOPool(utxoPool);
 	}
 
-	/** Returns true if
-	   * (1) all outputs claimed by tx are in the current UTXO pool
-	   * (2) the signatures on each input of tx are valid
-	   * (3) no UTXO is claimed multiple times by tx
-	   * (4) all of tx’s output values are non-negative
-	   * (5) the sum of tx’s input values is greater than or equal 
-	   * to the sum of its output values; and false otherwise.
-	   */
+	/*
+	 * Returns true if (1) all outputs claimed by tx are in the current UTXO
+	 * pool, (2) the signatures on each input of tx are valid, (3) no UTXO is
+	 * claimed multiple times by tx, (4) all of tx's output values are
+	 * non-negative, and (5) the sum of tx's input values is greater than or
+	 * equal to the sum of its output values; and false otherwise.
+	 */
+
 	public boolean isValidTx(Transaction tx) {
 
 		ArrayList<UTXO> seenUTXO = new ArrayList<UTXO>();
@@ -106,8 +110,8 @@ public class TxHandler {
 
 			// Check Signature
 			if(!Crypto.verifySignature(up.getTxOutput(checkUTXO).address, 
-										tx.getRawDataToSign(index), 
-										in.signature))
+					tx.getRawDataToSign(index), 
+					in.signature))
 				return INVALID; // 2
 
 			index++;
@@ -198,7 +202,7 @@ public class TxHandler {
 		return VALID;
 	}
 
-	/**
+	/*
 	 * Handles each epoch by receiving an unordered array of proposed
 	 * transactions, checking each transaction for correctness, returning a
 	 * mutually valid array of accepted transactions, and updating the current
@@ -300,6 +304,38 @@ public class TxHandler {
 			refs.add(tx2);
 		}
 	}
+
+	// public double txFee(Transaction tx) {
+	// double inSum=0;
+	// for (Transaction.Input in : tx.getInputs()) {
+	//
+	// inSum += up.getTxOutput(checkUTXO).value;
+	//
+	// // Check Signature
+	// if
+	// (!up.getTxOutput(checkUTXO).address.verifySignature(tx.getRawDataToSign(index),
+	// in.signature))
+	// return INVALID; // 2
+	//
+	// index++;
+	// }
+	//
+	// for (Transaction.Output out : tx.getOutputs()) {
+	// if (out.value < 0) return INVALID; // 4
+	// outSum += out.value;
+	// }
+	//
+	// if (outSum > inSum) return INVALID; // 5
+	// }
+	//
+	// public class TxFeeComparator implements Comparator<Transaction> {
+	//
+	// public int compare(Transaction t1, Transaction t2) {
+	// // TODO Auto-generated method stub
+	// return 0;
+	// }
+	//
+	// }
 
 	public Transaction[] greedyHandleTxs(Transaction[] possibleTxs) {
 
